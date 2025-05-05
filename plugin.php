@@ -1,5 +1,6 @@
 /**
  * Add CSV Import functionality for Projectsafes with custom column display and filter fix
+ * Updated with fix for duplicate Source and Method fields
  */
 
 // Add the Import CSV button
@@ -50,22 +51,22 @@ function add_import_button_to_projectsafes_list() {
                             <p>Your CSV file should have the following columns (in this order):</p>
                             <ol>
                                 <li>ID</li>
-                                <li>Created</li>
                                 <li>First Name</li>
                                 <li>Last Name</li>
-                                <li>Gender</li>
-                                <li>DOB</li>
+                                <li>FullName</li>
                                 <li>Phone</li>
                                 <li>Email</li>
+                                <li>Gender</li>
+                                <li>DOB</li>
                                 <li>Region</li>
                                 <li>District</li>
                                 <li>Address</li>
                                 <li>Source</li>
-                                <li>Contact Method</li>
-                                <li>Status</li>
+                                <li>Method</li>
+                                <li>Date</li>
                                 <li>Type</li>
+                                <li>Status (optional)</li>
                             </ol>
-                            <p>Note: If your Excel file has "Edit link" and "Submission Language" columns, please remove them before importing or they will be skipped automatically.</p>
                             <p><a href="#" id="download-sample-csv" class="button">Download Sample CSV</a></p>
                         </div>
                         
@@ -130,9 +131,9 @@ function add_import_button_to_projectsafes_list() {
             $('#download-sample-csv').on('click', function(e) {
                 e.preventDefault();
                 
-                var csvContent = "ID,Created,First Name,Last Name,Gender,DOB,Phone,Email,Region,District,Address,Source,Contact Method,Status,Type\n";
-                csvContent += "1,11-Mar-25,Pat,Kwok,Female,Sunday May 5 1985,28477777,pat.kwok@example.com,Hong Kong,Southern,25/F LHT T School,News,Email,Out of Quota,Project Safe\n";
-                csvContent += "2,11-Mar-25,Cheuk yi,Chan,Female,Sunday May 5 1985,67481489,lovemelove@example.com,New Territories,Yuen Long,天水圍健康中心,Health Talk by Email,SMS,Out of Quota,Project Safe";
+                var csvContent = "ID,First Name,Last Name,FullName,Phone,Email,Gender,DOB,Region,District,Address,Source,Method,Date,Type,Status\n";
+                csvContent += "17458,Aman,Koushik,Aman Koushik,96919390,aditya@phype.co,Female,Tuesday February 5 1985,Hong Kong,Eastern,sjkbd dkfjndf kdfnjkfd,Karen Leung Foundation Website,Email,03-May-25,Project Safe,Request\n";
+                csvContent += "17459,Jane,Smith,Jane Smith,87654321,jane@example.com,Female,1992-05-15,Hong Kong,Central,456 Park Ave,Referral,Phone,03-May-25,Project Teal,Completed";
                 
                 var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                 var link = document.createElement("a");
@@ -178,11 +179,6 @@ function add_import_button_to_projectsafes_list() {
                                 logHtml += '<div>' + message + '</div>';
                             });
                             $('#import-log').html(logHtml);
-                            
-                            // Refresh the page after 3 seconds to show updated data
-                            setTimeout(function() {
-                                location.reload();
-                            }, 3000);
                         } else {
                             $('#import-message').html('<div class="notice notice-error"><p>' + response.data.message + '</p></div>');
                         }
@@ -204,208 +200,113 @@ add_action('admin_footer', 'add_import_button_to_projectsafes_list');
 
 // This function will clean up the Method field before saving
 function clean_method_field($method) {
-    if (empty($method)) {
-        return $method;
-    }
-    
     // Remove any leading "- " from the method field
     if (substr($method, 0, 2) === '- ') {
         return substr($method, 2);
     }
+    
+    // Check for duplicate method values (e.g., "Email-Email")
+    if (preg_match('/^(Email|Phone|SMS|WhatsApp|WeChat)\-(Email|Phone|SMS|WhatsApp|WeChat)$/', $method)) {
+        $parts = explode('-', $method);
+        if ($parts[0] === $parts[1]) {
+            return $parts[0];
+        }
+    }
+    
     return $method;
 }
 
-// This function will clean up text fields to prevent duplication
-function clean_text_field($text) {
-    if (empty($text)) {
-        return $text;
+// This function will clean up the Source field before saving
+function clean_source_field($source) {
+    if (empty($source)) {
+        return $source;
     }
+
+    // First remove any double spaces
+    $source = preg_replace('/\s+/', ' ', trim($source));
     
-    // Check if the text is duplicated exactly (e.g., "ValueValue")
-    $half_length = strlen($text) / 2;
-    $first_half = substr($text, 0, $half_length);
-    $second_half = substr($text, $half_length);
-    
-    if ($first_half === $second_half) {
-        return $first_half;
-    }
-    
-    // Check for duplicated words (e.g., "Value Value")
-    $words = explode(' ', $text);
-    if (count($words) >= 2) {
-        $unique_words = array();
-        $last_word = '';
-        $has_duplicate = false;
-        
-        foreach ($words as $word) {
-            if ($word !== $last_word) {
-                $unique_words[] = $word;
-                $last_word = $word;
-            } else {
-                $has_duplicate = true;
-            }
-        }
-        
-        if ($has_duplicate) {
-            return implode(' ', $unique_words);
-        }
-    }
-    
-    // Check for specific patterns like "EmailEmail", "SMSSMS"
-    $patterns = array(
-        '/(\w+)\1+/i', // Matches repeated word patterns
+    // Common source values that might be duplicated
+    $known_sources = array(
+        'Health Talk by Karen Leung Foundation',
+        'Karen Leung Foundation',
+        'School News',
+        'Referral',
+        'Website',
+        'Email',
+        'SMS',
+        'Health Talk',
+        'School NewsSchool News'
     );
-    
-    foreach ($patterns as $pattern) {
-        if (preg_match($pattern, $text, $matches)) {
-            return preg_replace($pattern, '$1', $text);
+
+    // Check for exact duplicates first
+    foreach ($known_sources as $known_source) {
+        if (stripos($source, $known_source . $known_source) !== false) {
+            return $known_source;
         }
     }
+
+    // Check for variations and clean them
+    if (stripos($source, 'Health Talk by Karen Leung Foundation') !== false) {
+        return 'Health Talk by Karen Leung Foundation';
+    }
     
-    return $text;
+    if (stripos($source, 'School News') !== false) {
+        return 'School News';
+    }
+    
+    if (stripos($source, 'Karen Leung Foundation') !== false) {
+        return 'Karen Leung Foundation';
+    }
+
+    // Remove any duplicate occurrences separated by spaces or other characters
+    foreach ($known_sources as $known_source) {
+        $pattern = '/(' . preg_quote($known_source, '/') . ')[^a-zA-Z0-9]*(' . preg_quote($known_source, '/') . ')/i';
+        if (preg_match($pattern, $source)) {
+            return $known_source;
+        }
+    }
+
+    return $source;
 }
 
-// Add a function to register custom columns
-function register_projectsafes_columns($columns) {
-    // Keep the checkbox column
-    $new_columns = array(
-        'cb' => $columns['cb'],
-        'title' => $columns['title'],
-        'psyem_projectsafe_type' => 'Type',
-        'psyem_projectsafe_phone' => 'Phone',
-        'psyem_projectsafe_email' => 'Email',
-        'psyem_projectsafe_gender' => 'Gender',
-        'psyem_projectsafe_dob' => 'DOB',
-        'psyem_projectsafe_region' => 'Region',
-        'psyem_projectsafe_district' => 'District',
-        'psyem_projectsafe_address' => 'Address',
-        'psyem_projectsafe_source' => 'Source',
-        'psyem_projectsafe_method' => 'Method',
-        'psyem_projectsafe_status' => 'Status',
-        'psyem_projectsafe_created' => 'Created',
-        'date' => $columns['date']
+// This function will clean up the Status field before saving
+function clean_status_field($status) {
+    if (empty($status)) {
+        return $status;
+    }
+
+    // First remove any double spaces
+    $status = preg_replace('/\s+/', ' ', trim($status));
+    
+    // Common status values that might be duplicated
+    $known_statuses = array(
+        'Out of QuotaOut of Quota' => 'Out of Quota',
+        'Out of Quota Out of Quota' => 'Out of Quota',
+        'PublishedPublished' => 'Published',
+        'Published Published' => 'Published',
+        'RequestRequest' => 'Request',
+        'Request Request' => 'Request',
+        'CompletedCompleted' => 'Completed',
+        'Completed Completed' => 'Completed'
     );
-    
-    return $new_columns;
-}
-add_filter('manage_psyem-projectsafes_posts_columns', 'register_projectsafes_columns');
 
-// Make columns sortable
-function make_projectsafes_columns_sortable($columns) {
-    $columns['psyem_projectsafe_type'] = 'psyem_projectsafe_type';
-    $columns['psyem_projectsafe_source'] = 'psyem_projectsafe_source';
-    $columns['psyem_projectsafe_method'] = 'psyem_projectsafe_method';
-    $columns['psyem_projectsafe_status'] = 'psyem_projectsafe_status';
-    $columns['psyem_projectsafe_created'] = 'psyem_projectsafe_created';
-    return $columns;
-}
-add_filter('manage_edit-psyem-projectsafes_sortable_columns', 'make_projectsafes_columns_sortable');
-
-// Helper function to clean duplicated text
-function clean_duplicated_text($text) {
-    if (empty($text)) {
-        return $text;
-    }
-
-    // Step 1: Clean up specific known patterns first
-    $known_patterns = array(
-        // Source field patterns
-        '/Karen\s+Leung\s+Foundation(?:\s*Karen\s*Leung\s*Foundation)+/i' => 'Karen Leung Foundation',
-        '/Website\s+Karen\s+Leung\s+Foundation(?:\s*Website)+/i' => 'Website Karen Leung Foundation',
-        '/Health\s+Talk\s+by\s+Karen\s+Leung\s+Foundation(?:\s*Health\s*Talk\s*by\s*Karen\s*Leung\s*Foundation)+/i' => 'Health Talk by Karen Leung Foundation',
-        
-        // Address and Region patterns
-        '/Central\s*&\s*Western(?:\s*Central\s*&\s*Western)+/i' => 'Central & Western',
-        '/New\s+Territories(?:\s*New\s*Territories)+/i' => 'New Territories',
-        '/Hong\s+Kong\s+Island(?:\s*Hong\s*Kong\s*Island)+/i' => 'Hong Kong Island',
-        
-        // Method patterns
-        '/-\s*SMS(?:\s*-\s*SMS)+/i' => '-SMS',
-        '/-\s*Email(?:\s*-\s*Email)+/i' => '-Email',
-        '/-\s*Email,\s*SMS(?:\s*-\s*Email,\s*SMS)+/i' => '-Email, SMS'
-    );
-    
-    foreach ($known_patterns as $pattern => $replacement) {
-        $text = preg_replace($pattern, $replacement, $text);
-    }
-
-    // Step 2: Handle general duplicated words
-    $words = preg_split('/\s+/', trim($text));
-    if (count($words) > 1) {
-        $cleaned_words = array();
-        $prev_word = '';
-        
-        foreach ($words as $word) {
-            // Normalize the word for comparison
-            $normalized = strtolower(trim($word));
-            if ($normalized !== strtolower(trim($prev_word))) {
-                $cleaned_words[] = $word;
-                $prev_word = $word;
-            }
+    // Check for exact matches in known duplicates
+    foreach ($known_statuses as $duplicate => $clean) {
+        if (strcasecmp($status, $duplicate) === 0) {
+            return $clean;
         }
-        
-        $text = implode(' ', $cleaned_words);
     }
 
-    // Step 3: Handle concatenated duplicates (e.g., "SMSSMS", "EmailEmail")
-    $text = preg_replace('/(\b\w+)\1+\b/i', '$1', $text);
-
-    // Step 4: Handle special cases with delimiters
-    $text = preg_replace('/-(\w+)(?:-\1)+/i', '-$1', $text);
-    $text = preg_replace('/&\s*(\w+)(?:\s*&\s*\1)+/i', '& $1', $text);
-
-    // Step 5: Final cleanup of extra spaces and delimiters
-    $text = preg_replace('/\s+/', ' ', $text); // Remove multiple spaces
-    $text = preg_replace('/\s*-\s*/', '-', $text); // Clean up spaces around hyphens
-    $text = preg_replace('/\s*&\s*/', ' & ', $text); // Clean up spaces around ampersands
-    
-    return trim($text);
-}
-
-// Override the column display function
-function custom_projectsafes_column_display($column, $post_id) {
-    switch ($column) {
-        case 'psyem_projectsafe_source':
-        case 'psyem_projectsafe_address':
-        case 'psyem_projectsafe_method':
-        case 'psyem_projectsafe_region':
-        case 'psyem_projectsafe_district':
-            $value = get_post_meta($post_id, $column, true);
-            // Clean and store the value back to ensure consistency
-            $cleaned_value = clean_duplicated_text($value);
-            if ($value !== $cleaned_value) {
-                update_post_meta($post_id, $column, $cleaned_value);
-            }
-            echo !empty($cleaned_value) ? esc_html($cleaned_value) : '-';
-            break;
-            
-        default:
-            $value = get_post_meta($post_id, $column, true);
-            echo !empty($value) ? esc_html($value) : '-';
-            break;
+    // If the status is repeated, just return one instance
+    $words = explode(' ', $status);
+    if (count($words) >= 2 && $words[0] === $words[1]) {
+        return $words[0];
     }
+
+    return $status;
 }
 
-// Make sure we remove any previous display functions and add our new one
-remove_action('manage_psyem-projectsafes_posts_custom_column', 'custom_projectsafes_column_display', 10);
-add_action('manage_psyem-projectsafes_posts_custom_column', 'custom_projectsafes_column_display', 10, 2);
-
-// Add a refresh trigger to ensure changes are visible
-add_action('admin_footer', function() {
-    ?>
-    <script type="text/javascript">
-    jQuery(document).ready(function($) {
-        // Force refresh the page once
-        if (!sessionStorage.getItem('refreshed')) {
-            sessionStorage.setItem('refreshed', 'true');
-            location.reload();
-        }
-    });
-    </script>
-    <?php
-});
-
-// Handle AJAX request for CSV import with improved field handling
+// Handle AJAX request for CSV import
 function process_projectsafes_csv_import_ajax() {
     // Check nonce
     if (!isset($_POST['security']) || !wp_verify_nonce($_POST['security'], 'projectsafes_csv_import_nonce')) {
@@ -439,12 +340,7 @@ function process_projectsafes_csv_import_ajax() {
     
     // Skip header row if needed
     if ($has_header) {
-        $header_row = fgetcsv($handle);
-        
-        // Debug: Log the header row
-        if ($debug_mode) {
-            $log[] = 'DEBUG: Header row: ' . implode(', ', $header_row);
-        }
+        fgetcsv($handle);
     }
     
     $imported = 0;
@@ -452,74 +348,60 @@ function process_projectsafes_csv_import_ajax() {
     $skipped = 0;
     $log = array();
     
+    // Debug: Get all meta keys for a sample post to see what they should be
+    if ($debug_mode) {
+        $debug_post = get_posts(array(
+            'post_type' => 'psyem-projectsafes',
+            'posts_per_page' => 1,
+            'orderby' => 'date',
+            'order' => 'DESC'
+        ));
+        
+        if (!empty($debug_post)) {
+            $debug_post_id = $debug_post[0]->ID;
+            $all_meta = get_post_meta($debug_post_id);
+            $log[] = 'DEBUG: Found existing post ID ' . $debug_post_id . ' with meta keys: ' . implode(', ', array_keys($all_meta));
+        }
+    }
+    
     // Process each row
     while (($data = fgetcsv($handle)) !== false) {
-        // Count the columns to determine if we have the expected format
-        $column_count = count($data);
-        
-        // Debug: Log the row data
-        if ($debug_mode) {
-            $log[] = 'DEBUG: Row data: ' . implode(', ', $data);
-            $log[] = 'DEBUG: Column count: ' . $column_count;
-        }
-        
-        // Skip rows with insufficient data
-        if ($column_count < 15) {
+        // Make sure we have enough columns
+        if (count($data) < 15) {
             $skipped++;
-            $log[] = 'Skipped row: Not enough columns. Expected at least 15, got ' . $column_count;
+            $log[] = 'Skipped row: Not enough columns. Expected at least 15, got ' . count($data);
             continue;
         }
         
         // Map CSV columns to post fields based on the Excel format
-        // Format: ID, Created, First Name, Last Name, Gender, DOB, Phone, Email, Region, District, Address, Source, Contact Method, Status, Type
-        
         $id = !empty($data[0]) ? sanitize_text_field($data[0]) : '';
-        $created = !empty($data[1]) ? sanitize_text_field($data[1]) : '';
-        $first_name = !empty($data[2]) ? sanitize_text_field($data[2]) : '';
-        $last_name = !empty($data[3]) ? sanitize_text_field($data[3]) : '';
-        $gender = !empty($data[4]) ? sanitize_text_field($data[4]) : '';
-        $dob = !empty($data[5]) ? sanitize_text_field($data[5]) : '';
-        $phone = !empty($data[6]) ? sanitize_text_field($data[6]) : '';
-        $email = !empty($data[7]) ? sanitize_email($data[7]) : '';
-        $region = !empty($data[8]) ? sanitize_text_field($data[8]) : '';
-        $district = !empty($data[9]) ? sanitize_text_field($data[9]) : '';
-        $address = !empty($data[10]) ? sanitize_text_field($data[10]) : '';
-        $source = !empty($data[11]) ? clean_text_field(sanitize_text_field($data[11])) : '';
-        $method = !empty($data[12]) ? clean_method_field(sanitize_text_field($data[12])) : '';
-        $status = !empty($data[13]) ? clean_text_field(sanitize_text_field($data[13])) : '';
-        $type = !empty($data[14]) ? sanitize_text_field($data[14]) : '';
+        $first_name = sanitize_text_field($data[1]);
+        $last_name = sanitize_text_field($data[2]);
+        $full_name = sanitize_text_field($data[3]);
+        $phone = sanitize_text_field($data[4]);
+        $email = sanitize_email($data[5]);
+        $gender = sanitize_text_field($data[6]);
+        $dob = sanitize_text_field($data[7]);
+        $region = sanitize_text_field($data[8]);
+        $district = sanitize_text_field($data[9]);
+        $address = sanitize_text_field($data[10]);
+        $source = clean_source_field(sanitize_text_field($data[11]));
+        $method = clean_method_field(sanitize_text_field($data[12]));
+        $date = sanitize_text_field($data[13]);
         
         // Standardize the type value
-        if (empty($type)) {
-            $type = 'Project Safe'; // Default value if empty
-        } else if (strtolower($type) === 'project safe' || strtolower($type) === 'project-safe') {
+        $type = sanitize_text_field($data[14]);
+        if (strtolower($type) === 'project safe' || strtolower($type) === 'project-safe') {
             $type = 'Project Safe';
         } else if (strtolower($type) === 'project teal' || strtolower($type) === 'project-teal') {
             $type = 'Project Teal';
         }
         
-        // Use full_name as the post title, or combine first and last name
-        $full_name = trim($first_name . ' ' . $last_name);
-        $post_title = !empty($full_name) ? $full_name : 'Unnamed Record';
+        // Status is optional (column 16)
+        $status = isset($data[15]) ? clean_status_field(sanitize_text_field($data[15])) : '';
         
-        // Debug: Log the extracted data
-        if ($debug_mode) {
-            $log[] = "DEBUG: Extracted data:";
-            $log[] = "DEBUG: ID: $id";
-            $log[] = "DEBUG: Created: $created";
-            $log[] = "DEBUG: Name: $first_name $last_name";
-            $log[] = "DEBUG: Gender: $gender";
-            $log[] = "DEBUG: DOB: $dob";
-            $log[] = "DEBUG: Phone: $phone";
-            $log[] = "DEBUG: Email: $email";
-            $log[] = "DEBUG: Region: $region";
-            $log[] = "DEBUG: District: $district";
-            $log[] = "DEBUG: Address: $address";
-            $log[] = "DEBUG: Source: $source";
-            $log[] = "DEBUG: Method: $method";
-            $log[] = "DEBUG: Status: $status";
-            $log[] = "DEBUG: Type: $type";
-        }
+        // Use full_name as the post title, or combine first and last name if full_name is empty
+        $post_title = !empty($full_name) ? $full_name : $first_name . ' ' . $last_name;
         
         // Check if we should update an existing record
         $existing_post_id = null;
@@ -569,24 +451,30 @@ function process_projectsafes_csv_import_ajax() {
             update_post_meta($existing_post_id, 'psyem_projectsafe_phone', $phone);
             update_post_meta($existing_post_id, 'psyem_projectsafe_email', $email);
             update_post_meta($existing_post_id, 'psyem_projectsafe_gender', $gender);
-            
-            // Ensure DOB is properly saved
-            if (!empty($dob)) {
-                update_post_meta($existing_post_id, 'psyem_projectsafe_dob', $dob);
-            }
-            
+            update_post_meta($existing_post_id, 'psyem_projectsafe_dob', $dob); // Direct update
             update_post_meta($existing_post_id, 'psyem_projectsafe_region', $region);
             update_post_meta($existing_post_id, 'psyem_projectsafe_district', $district);
             update_post_meta($existing_post_id, 'psyem_projectsafe_address', $address);
             update_post_meta($existing_post_id, 'psyem_projectsafe_source', $source);
+            update_post_meta($existing_post_id, 'psyem_projectsafe_method', $method); // Direct update
+            update_post_meta($existing_post_id, 'psyem_projectsafe_date', $date);
             
-            // Ensure Method is properly saved
-            if (!empty($method)) {
-                update_post_meta($existing_post_id, 'psyem_projectsafe_method', $method);
+            if (!empty($status)) {
+                $clean_status = clean_status_field($status);
+                update_post_meta($existing_post_id, 'psyem_projectsafe_status', $clean_status);
             }
             
-            update_post_meta($existing_post_id, 'psyem_projectsafe_status', $status);
-            update_post_meta($existing_post_id, 'psyem_projectsafe_created', $created);
+            // Debug info
+            if ($debug_mode) {
+                $log[] = "DEBUG: Updated DOB value: '$dob'";
+                $log[] = "DEBUG: Updated Method value: '$method'";
+                $log[] = "DEBUG: Updated Source value: '$source'";
+                $log[] = "DEBUG: Updated Type value: '$type'";
+                $log[] = "DEBUG: After update, DOB = " . get_post_meta($existing_post_id, 'psyem_projectsafe_dob', true);
+                $log[] = "DEBUG: After update, Method = " . get_post_meta($existing_post_id, 'psyem_projectsafe_method', true);
+                $log[] = "DEBUG: After update, Source = " . get_post_meta($existing_post_id, 'psyem_projectsafe_source', true);
+                $log[] = "DEBUG: After update, Type = " . get_post_meta($existing_post_id, 'psyem_projectsafe_type', true);
+            }
             
             $updated++;
             $log[] = 'Updated: ' . $post_title . ' (ID: ' . $existing_post_id . ')';
@@ -612,24 +500,30 @@ function process_projectsafes_csv_import_ajax() {
             update_post_meta($post_id, 'psyem_projectsafe_phone', $phone);
             update_post_meta($post_id, 'psyem_projectsafe_email', $email);
             update_post_meta($post_id, 'psyem_projectsafe_gender', $gender);
-            
-            // Ensure DOB is properly saved
-            if (!empty($dob)) {
-                update_post_meta($post_id, 'psyem_projectsafe_dob', $dob);
-            }
-            
+            update_post_meta($post_id, 'psyem_projectsafe_dob', $dob); // Direct update
             update_post_meta($post_id, 'psyem_projectsafe_region', $region);
             update_post_meta($post_id, 'psyem_projectsafe_district', $district);
             update_post_meta($post_id, 'psyem_projectsafe_address', $address);
             update_post_meta($post_id, 'psyem_projectsafe_source', $source);
+            update_post_meta($post_id, 'psyem_projectsafe_method', $method); // Direct update
+            update_post_meta($post_id, 'psyem_projectsafe_date', $date);
             
-            // Ensure Method is properly saved
-            if (!empty($method)) {
-                update_post_meta($post_id, 'psyem_projectsafe_method', $method);
+            if (!empty($status)) {
+                $clean_status = clean_status_field($status);
+                update_post_meta($post_id, 'psyem_projectsafe_status', $clean_status);
             }
             
-            update_post_meta($post_id, 'psyem_projectsafe_status', $status);
-            update_post_meta($post_id, 'psyem_projectsafe_created', $created);
+            // Debug info
+            if ($debug_mode) {
+                $log[] = "DEBUG: Set DOB value: '$dob'";
+                $log[] = "DEBUG: Set Method value: '$method'";
+                $log[] = "DEBUG: Set Source value: '$source'";
+                $log[] = "DEBUG: Set Type value: '$type'";
+                $log[] = "DEBUG: After creation, DOB = " . get_post_meta($post_id, 'psyem_projectsafe_dob', true);
+                $log[] = "DEBUG: After creation, Method = " . get_post_meta($post_id, 'psyem_projectsafe_method', true);
+                $log[] = "DEBUG: After creation, Source = " . get_post_meta($post_id, 'psyem_projectsafe_source', true);
+                $log[] = "DEBUG: After creation, Type = " . get_post_meta($post_id, 'psyem_projectsafe_type', true);
+            }
             
             $imported++;
             $log[] = 'Imported: ' . $post_title . ' (ID: ' . $post_id . ')';
@@ -647,6 +541,32 @@ function process_projectsafes_csv_import_ajax() {
     ));
 }
 add_action('wp_ajax_process_projectsafes_csv', 'process_projectsafes_csv_import_ajax');
+
+// Add custom column display handlers
+function custom_projectsafes_column_display($column, $post_id) {
+    switch ($column) {
+        case 'psyem_projectsafe_dob':
+            $dob = get_post_meta($post_id, 'psyem_projectsafe_dob', true);
+            echo !empty($dob) ? esc_html($dob) : '-';
+            break;
+            
+        case 'psyem_projectsafe_method':
+            $method = get_post_meta($post_id, 'psyem_projectsafe_method', true);
+            echo !empty($method) ? esc_html($method) : '-';
+            break;
+            
+        case 'psyem_projectsafe_source':
+            $source = get_post_meta($post_id, 'psyem_projectsafe_source', true);
+            echo !empty($source) ? esc_html($source) : '-';
+            break;
+            
+        case 'psyem_projectsafe_status':
+            $status = get_post_meta($post_id, 'psyem_projectsafe_status', true);
+            echo !empty($status) ? esc_html($status) : '-';
+            break;
+    }
+}
+add_action('manage_psyem-projectsafes_posts_custom_column', 'custom_projectsafes_column_display', 10, 2);
 
 // Fix for Project Safe Type filtering
 function fix_projectsafe_type_filter($query) {
@@ -736,8 +656,8 @@ function add_projectsafe_type_filter() {
 }
 add_action('restrict_manage_posts', 'add_projectsafe_type_filter');
 
-// Add a function to debug and fix DOB and Method fields
-function debug_and_fix_dob_method_fields() {
+// Fix existing records with duplicate Source/Method values
+function fix_duplicate_source_method_fields() {
     // Get all projectsafes posts
     $posts = get_posts(array(
         'post_type' => 'psyem-projectsafes',
@@ -745,131 +665,96 @@ function debug_and_fix_dob_method_fields() {
         'fields' => 'ids'
     ));
     
-    $fixed_dob = 0;
-    $fixed_method = 0;
+    $updated = 0;
     
     foreach ($posts as $post_id) {
-        // Check and fix DOB field
-        $dob = get_post_meta($post_id, 'psyem_projectsafe_dob', true);
-        if (empty($dob)) {
-            // Try to get DOB from raw post meta
-            $all_meta = get_post_meta($post_id);
-            foreach ($all_meta as $key => $value) {
-                if (strpos($key, 'dob') !== false || strpos($key, 'birth') !== false) {
-                    if (!empty($value[0])) {
-                        update_post_meta($post_id, 'psyem_projectsafe_dob', $value[0]);
-                        $fixed_dob++;
-                        break;
-                    }
-                }
-            }
+        $source = get_post_meta($post_id, 'psyem_projectsafe_source', true);
+        $method = get_post_meta($post_id, 'psyem_projectsafe_method', true);
+        
+        // Check for duplications in source
+        $cleaned_source = clean_source_field($source);
+        if ($cleaned_source !== $source) {
+            update_post_meta($post_id, 'psyem_projectsafe_source', $cleaned_source);
+            $updated++;
         }
         
-        // Check and fix Method field
-        $method = get_post_meta($post_id, 'psyem_projectsafe_method', true);
-        if (empty($method)) {
-            // Try to get Method from raw post meta
-            $all_meta = get_post_meta($post_id);
-            foreach ($all_meta as $key => $value) {
-                if (strpos($key, 'method') !== false || strpos($key, 'contact_method') !== false) {
-                    if (!empty($value[0])) {
-                        $clean_method = clean_method_field($value[0]);
-                        update_post_meta($post_id, 'psyem_projectsafe_method', $clean_method);
-                        $fixed_method++;
-                        break;
-                    }
-                }
-            }
+        // Check for duplications in method
+        $cleaned_method = clean_method_field($method);
+        if ($cleaned_method !== $method) {
+            update_post_meta($post_id, 'psyem_projectsafe_method', $cleaned_method);
+            $updated++;
         }
     }
     
-    // Add admin notice if we fixed any fields
-    if ($fixed_dob > 0 || $fixed_method > 0) {
-        add_action('admin_notices', function() use ($fixed_dob, $fixed_method) {
+    return $updated;
+}
+
+// Run this function once to fix existing records
+function run_duplicate_field_fix() {
+    $updated = fix_duplicate_source_method_fields();
+    
+    // Add admin notice
+    if ($updated > 0) {
+        add_action('admin_notices', function() use ($updated) {
             ?>
             <div class="notice notice-success is-dismissible">
-                <p><?php echo sprintf('Fixed %d DOB fields and %d Method fields.', $fixed_dob, $fixed_method); ?></p>
+                <p><?php echo sprintf('Fixed %d duplicate Source/Method values in Project Safe records.', $updated); ?></p>
             </div>
             <?php
         });
     }
 }
-add_action('admin_init', 'debug_and_fix_dob_method_fields');
+add_action('admin_init', 'run_duplicate_field_fix');
 
-// Fix blank values in existing records
-function fix_blank_projectsafe_values() {
-    // Get all projectsafes posts
-    $posts = get_posts(array(
-        'post_type' => 'psyem-projectsafes',
-        'posts_per_page' => -1,
-        'fields' => 'ids'
-    ));
+// Debug function to check what's happening with the columns
+function debug_projectsafes_columns() {
+    $screen = get_current_screen();
     
-    $updated_types = 0;
-    $updated_source = 0;
-    $updated_status = 0;
-    $updated_method = 0;
-    $updated_dob = 0;
-    
-    foreach ($posts as $post_id) {
-        // Fix type values
-        $type = get_post_meta($post_id, 'psyem_projectsafe_type', true);
-        if (empty($type)) {
-            update_post_meta($post_id, 'psyem_projectsafe_type', 'Project Safe');
-            $updated_types++;
-        } else if (strtolower($type) === 'project safe' || strtolower($type) === 'project-safe') {
-            update_post_meta($post_id, 'psyem_projectsafe_type', 'Project Safe');
-            $updated_types++;
-        } else if (strtolower($type) === 'project teal' || strtolower($type) === 'project-teal') {
-            update_post_meta($post_id, 'psyem_projectsafe_type', 'Project Teal');
-            $updated_types++;
-        }
-        
-        // Fix source values
-        $source = get_post_meta($post_id, 'psyem_projectsafe_source', true);
-        $cleaned_source = clean_text_field($source);
-        if ($source !== $cleaned_source) {
-            update_post_meta($post_id, 'psyem_projectsafe_source', $cleaned_source);
-            $updated_source++;
-        }
-        
-        // Fix status values
-        $status = get_post_meta($post_id, 'psyem_projectsafe_status', true);
-        $cleaned_status = clean_text_field($status);
-        if ($status !== $cleaned_status) {
-            update_post_meta($post_id, 'psyem_projectsafe_status', $cleaned_status);
-            $updated_status++;
-        }
-        
-        // Fix method values
-        $method = get_post_meta($post_id, 'psyem_projectsafe_method', true);
-        $cleaned_method = clean_method_field($method);
-        if (empty($method)) {
-            update_post_meta($post_id, 'psyem_projectsafe_method', 'Not specified');
-            $updated_method++;
-        } else if ($method !== $cleaned_method) {
-            update_post_meta($post_id, 'psyem_projectsafe_method', $cleaned_method);
-            $updated_method++;
-        }
-        
-        // Fix DOB values
-        $dob = get_post_meta($post_id, 'psyem_projectsafe_dob', true);
-        if (empty($dob)) {
-            update_post_meta($post_id, 'psyem_projectsafe_dob', 'Not specified');
-            $updated_dob++;
-        }
+    // Only run on the Projectsafes listing page
+    if ($screen->id !== 'edit-psyem-projectsafes') {
+        return;
     }
     
-    return array(
-        'updated_types' => $updated_types,
-        'updated_source' => $updated_source,
-        'updated_status' => $updated_status,
-        'updated_method' => $updated_method,
-        'updated_dob' => $updated_dob
-    );
+    // Get a sample post to check its meta
+    $posts = get_posts(array(
+        'post_type' => 'psyem-projectsafes',
+        'posts_per_page' => 1
+    ));
+    
+    if (empty($posts)) {
+        return;
+    }
+    
+    $post_id = $posts[0]->ID;
+    
+    // Get all meta for this post
+    $all_meta = get_post_meta($post_id);
+    
+    // Check specific fields
+    $dob = get_post_meta($post_id, 'psyem_projectsafe_dob', true);
+    $method = get_post_meta($post_id, 'psyem_projectsafe_method', true);
+    $source = get_post_meta($post_id, 'psyem_projectsafe_source', true);
+    $status = get_post_meta($post_id, 'psyem_projectsafe_status', true);
+    $type = get_post_meta($post_id, 'psyem_projectsafe_type', true);
+    
+    // Output debug info
+    ?>
+    <div class="notice notice-info">
+        <p><strong>Debug Info for Projectsafes Columns:</strong></p>
+        <p>Post ID: <?php echo $post_id; ?></p>
+        <p>Type value: "<?php echo esc_html($type); ?>"</p>
+        <p>DOB value: "<?php echo esc_html($dob); ?>"</p>
+        <p>Method value: "<?php echo esc_html($method); ?>"</p>
+        <p>Source value: "<?php echo esc_html($source); ?>"</p>
+        <p>Status value: "<?php echo esc_html($status); ?>"</p>
+        <p>All meta keys: <?php echo implode(', ', array_keys($all_meta)); ?></p>
+        <p>Current filter: <?php echo isset($_GET['projectsafe_type']) ? esc_html($_GET['projectsafe_type']) : 'None'; ?></p>
+    </div>
+    <?php
 }
+add_action('admin_notices', 'debug_projectsafes_columns');
 
-// Force refresh of column data with JavaScript - improved version
+// Force refresh of column data with JavaScript
 function force_refresh_projectsafes_columns() {
     $screen = get_current_screen();
     
@@ -886,29 +771,31 @@ function force_refresh_projectsafes_columns() {
             $('select[name="projectsafe_type"]:not(#filter-by-projectsafe-type)').remove();
         }
         
-        // Force refresh of all column data
-        $('.column-psyem_projectsafe_dob, .column-psyem_projectsafe_method, .column-psyem_projectsafe_source, .column-psyem_projectsafe_status, .column-psyem_projectsafe_type, .column-psyem_projectsafe_phone, .column-psyem_projectsafe_email, .column-psyem_projectsafe_gender, .column-psyem_projectsafe_region, .column-psyem_projectsafe_district, .column-psyem_projectsafe_address, .column-psyem_projectsafe_created').each(function() {
+        // Force refresh of column data
+        $('.column-psyem_projectsafe_dob, .column-psyem_projectsafe_method, .column-psyem_projectsafe_source, .column-psyem_projectsafe_status').each(function() {
             var $cell = $(this);
             var postId = $cell.closest('tr').attr('id').replace('post-', '');
             var columnClass = $cell.attr('class').split(' ')[0];
             var columnName = columnClass.replace('column-', '');
             
-            // Refresh all cells, not just empty ones
-            $.ajax({
-                url: ajaxurl,
-                type: 'POST',
-                data: {
-                    action: 'get_projectsafe_column_value',
-                    post_id: postId,
-                    column: columnName,
-                    security: '<?php echo wp_create_nonce("projectsafes_column_nonce"); ?>'
-                },
-                success: function(response) {
-                    if (response.success && response.data) {
-                        $cell.html(response.data);
+            // Only refresh cells that are empty or have a dash
+            if ($cell.text().trim() === '-' || $cell.text().trim() === '') {
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'get_projectsafe_column_value',
+                        post_id: postId,
+                        column: columnName,
+                        security: '<?php echo wp_create_nonce("projectsafes_column_nonce"); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success && response.data) {
+                            $cell.html(response.data);
+                        }
                     }
-                }
-            });
+                });
+            }
         });
     });
     </script>
@@ -936,41 +823,13 @@ function get_projectsafe_column_value_ajax() {
     // Get the value from post meta
     $value = get_post_meta($post_id, $column, true);
     
-    // Clean up duplicated text for source and status
-    if ($column === 'psyem_projectsafe_source' || $column === 'psyem_projectsafe_status') {
-        $value = clean_text_field($value);
-    } else if ($column === 'psyem_projectsafe_method') {
-        $value = clean_method_field($value);
-    }
-    
     // Return the value
     wp_send_json_success(!empty($value) ? esc_html($value) : '-');
 }
 add_action('wp_ajax_get_projectsafe_column_value', 'get_projectsafe_column_value_ajax');
 
-// Add sorting functionality for custom columns
-function projectsafes_orderby_column($query) {
-    if (!is_admin() || !$query->is_main_query() || $query->get('post_type') !== 'psyem-projectsafes') {
-        return;
-    }
-    
-    $orderby = $query->get('orderby');
-    
-    // Check if we're ordering by one of our custom columns
-    if ($orderby === 'psyem_projectsafe_type' || 
-        $orderby === 'psyem_projectsafe_source' || 
-        $orderby === 'psyem_projectsafe_method' || 
-        $orderby === 'psyem_projectsafe_status' || 
-        $orderby === 'psyem_projectsafe_created') {
-        
-        $query->set('meta_key', $orderby);
-        $query->set('orderby', 'meta_value');
-    }
-}
-add_action('pre_get_posts', 'projectsafes_orderby_column');
-
-// Function to fix duplicate values in text fields
-function fix_duplicate_values_in_fields() {
+// Update existing records to standardize type values
+function update_projectsafe_type_values() {
     // Get all projectsafes posts
     $posts = get_posts(array(
         'post_type' => 'psyem-projectsafes',
@@ -978,153 +837,82 @@ function fix_duplicate_values_in_fields() {
         'fields' => 'ids'
     ));
     
-    $fixed_fields = array(
-        'type' => 0,
-        'phone' => 0,
-        'email' => 0,
-        'gender' => 0,
-        'region' => 0,
-        'district' => 0,
-        'address' => 0,
-        'source' => 0,
-        'method' => 0,
-        'status' => 0
-    );
+    $updated = 0;
     
     foreach ($posts as $post_id) {
-        // Fix all text fields that might have duplicated text
-        $fields = array(
-            'psyem_projectsafe_type',
-            'psyem_projectsafe_phone',
-            'psyem_projectsafe_email',
-            'psyem_projectsafe_gender',
-            'psyem_projectsafe_region',
-            'psyem_projectsafe_district',
-            'psyem_projectsafe_address',
-            'psyem_projectsafe_source',
-            'psyem_projectsafe_method',
-            'psyem_projectsafe_status'
-        );
+        $type = get_post_meta($post_id, 'psyem_projectsafe_type', true);
         
-        foreach ($fields as $field) {
-            $value = get_post_meta($post_id, $field, true);
-            if (!empty($value)) {
-                $field_type = str_replace('psyem_projectsafe_', '', $field);
-                
-                // Check if value is duplicated
-                $half_length = strlen($value) / 2;
-                $first_half = substr($value, 0, $half_length);
-                $second_half = substr($value, $half_length);
-                
-                if ($first_half === $second_half) {
-                    // Value is duplicated, update with just the first half
-                    update_post_meta($post_id, $field, $first_half);
-                    $fixed_fields[$field_type]++;
-                } else {
-                    // Check for other types of duplication (e.g., "EmailEmail", "SMSSMS")
-                    $clean_value = $value;
-                    
-                    // Check for duplicated words
-                    $words = explode(' ', $value);
-                    if (count($words) >= 2) {
-                        $unique_words = array();
-                        $last_word = '';
-                        $has_duplicate = false;
-                        
-                        foreach ($words as $word) {
-                            if ($word !== $last_word) {
-                                $unique_words[] = $word;
-                                $last_word = $word;
-                            } else {
-                                $has_duplicate = true;
-                            }
-                        }
-                        
-                        if ($has_duplicate) {
-                            $clean_value = implode(' ', $unique_words);
-                            update_post_meta($post_id, $field, $clean_value);
-                            $fixed_fields[$field_type]++;
-                        }
-                    }
-                    
-                    // Check for specific patterns like "EmailEmail", "SMSSMS"
-                    $patterns = array(
-                        '/(\w+)\1+/i', // Matches repeated word patterns
-                    );
-                    
-                    foreach ($patterns as $pattern) {
-                        if (preg_match($pattern, $value, $matches)) {
-                            $clean_value = preg_replace($pattern, '$1', $value);
-                            update_post_meta($post_id, $field, $clean_value);
-                            $fixed_fields[$field_type]++;
-                            break;
-                        }
-                    }
-                }
-            }
+        // Standardize the type value
+        if (strtolower($type) === 'project safe' || strtolower($type) === 'project-safe') {
+            update_post_meta($post_id, 'psyem_projectsafe_type', 'Project Safe');
+            $updated++;
+        } else if (strtolower($type) === 'project teal' || strtolower($type) === 'project-teal') {
+            update_post_meta($post_id, 'psyem_projectsafe_type', 'Project Teal');
+            $updated++;
         }
     }
     
-    return $fixed_fields;
+    // Add admin notice
+    if ($updated > 0) {
+        add_action('admin_notices', function() use ($updated) {
+            ?>
+            <div class="notice notice-success is-dismissible">
+                <p><?php echo sprintf('Updated %d Project Safe type values for consistency.', $updated); ?></p>
+            </div>
+            <?php
+        });
+    }
 }
+add_action('admin_init', 'update_projectsafe_type_values');
 
-// Add a function to clean up all existing records
-function cleanup_all_projectsafe_records() {
+// Fix existing records with duplicate Source/Method/Status values
+function psyem_fix_duplicate_fields() {
+    // Get all projectsafes posts
     $posts = get_posts(array(
         'post_type' => 'psyem-projectsafes',
         'posts_per_page' => -1,
         'fields' => 'ids'
     ));
     
-    $cleaned_count = 0;
+    $updated = 0;
+    
     foreach ($posts as $post_id) {
-        $fields_to_clean = array(
-            'psyem_projectsafe_source',
-            'psyem_projectsafe_address',
-            'psyem_projectsafe_method',
-            'psyem_projectsafe_region',
-            'psyem_projectsafe_district'
-        );
+        $source = get_post_meta($post_id, 'psyem_projectsafe_source', true);
+        $status = get_post_meta($post_id, 'psyem_projectsafe_status', true);
         
-        foreach ($fields_to_clean as $field) {
-            $value = get_post_meta($post_id, $field, true);
-            if (!empty($value)) {
-                $cleaned_value = clean_duplicated_text($value);
-                if ($value !== $cleaned_value) {
-                    update_post_meta($post_id, $field, $cleaned_value);
-                    $cleaned_count++;
-                }
+        // Check for duplications in source
+        $cleaned_source = clean_source_field($source);
+        if ($cleaned_source !== $source) {
+            update_post_meta($post_id, 'psyem_projectsafe_source', $cleaned_source);
+            $updated++;
+        }
+        
+        // Check for duplications in status
+        if (!empty($status)) {
+            $cleaned_status = clean_status_field($status);
+            if ($cleaned_status !== $status) {
+                update_post_meta($post_id, 'psyem_projectsafe_status', $cleaned_status);
+                $updated++;
             }
         }
     }
     
-    return $cleaned_count;
+    return $updated;
 }
 
-// Add an admin action to trigger the cleanup
-add_action('admin_init', function() {
-    if (isset($_GET['cleanup_projectsafe_records']) && current_user_can('manage_options')) {
-        $cleaned = cleanup_all_projectsafe_records();
-        add_action('admin_notices', function() use ($cleaned) {
+// Run this function once to fix existing records
+function psyem_run_duplicate_field_fix() {
+    $updated = psyem_fix_duplicate_fields();
+    
+    // Add admin notice
+    if ($updated > 0) {
+        add_action('admin_notices', function() use ($updated) {
             ?>
             <div class="notice notice-success is-dismissible">
-                <p><?php echo sprintf('Cleaned up %d duplicate values in ProjectSafe records.', $cleaned); ?></p>
+                <p><?php echo sprintf('Fixed %d duplicate Source/Status values in Project Safe records.', $updated); ?></p>
             </div>
             <?php
         });
     }
-});
-
-// Add a cleanup button to the admin toolbar
-add_action('admin_bar_menu', function($admin_bar) {
-    if (current_user_can('manage_options')) {
-        $admin_bar->add_menu(array(
-            'id'    => 'cleanup-projectsafe-records',
-            'title' => 'Clean ProjectSafe Records',
-            'href'  => add_query_arg('cleanup_projectsafe_records', '1', admin_url('edit.php?post_type=psyem-projectsafes')),
-            'meta'  => array(
-                'title' => 'Clean up duplicate values in ProjectSafe records',
-            ),
-        ));
-    }
-}, 100);
+}
+add_action('admin_init', 'psyem_run_duplicate_field_fix');
