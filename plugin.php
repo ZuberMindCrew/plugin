@@ -1,6 +1,6 @@
 /**
  * Add CSV Import functionality for Projectsafes with custom column display and filter fix
- * Updated with fix for duplicate Source and Method fields
+ * Updated with improved handling for duplicate Source and Method fields
  */
 
 // Add the Import CSV button
@@ -198,25 +198,46 @@ function add_import_button_to_projectsafes_list() {
 }
 add_action('admin_footer', 'add_import_button_to_projectsafes_list');
 
-// This function will clean up the Method field before saving
+// Improved function to clean up the Method field before saving
 function clean_method_field($method) {
-    // Remove any leading "- " from the method field
-    if (substr($method, 0, 2) === '- ') {
-        return substr($method, 2);
+    if (empty($method)) {
+        return '';
     }
     
-    // Check for duplicate method values (e.g., "Email-Email")
-    if (preg_match('/^(Email|Phone|SMS|WhatsApp|WeChat)\-(Email|Phone|SMS|WhatsApp|WeChat)$/', $method)) {
-        $parts = explode('-', $method);
-        if ($parts[0] === $parts[1]) {
-            return $parts[0];
+    // First remove any double spaces and trim
+    $method = trim(preg_replace('/\s+/', ' ', $method));
+    
+    // Remove any leading "- " from the method field
+    if (substr($method, 0, 2) === '- ') {
+        $method = substr($method, 2);
+    }
+    
+    // Check for duplicate method values (e.g., "Email-Email", "Email,Email", "Email Email")
+    $common_methods = array('Email', 'Phone', 'SMS', 'WhatsApp', 'WeChat');
+    
+    // Check for duplicates with different separators
+    foreach ($common_methods as $common_method) {
+        // Check for patterns like "Email-Email", "Email,Email", "Email Email"
+        $patterns = array(
+            '/' . preg_quote($common_method, '/') . '\s*[\-,]\s*' . preg_quote($common_method, '/') . '/i',
+            '/' . preg_quote($common_method, '/') . '\s+' . preg_quote($common_method, '/') . '/i'
+        );
+        
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $method)) {
+                return $common_method;
+            }
         }
     }
+    
+    // Check for method values with multiple separators (e.g., "Email, SMS-WhatsApp")
+    // This will standardize the format to use commas
+    $method = preg_replace('/\s*[\-,]\s*/', ', ', $method);
     
     return $method;
 }
 
-// This function will clean up the Source field before saving
+// Improved function to clean up the Source field before saving
 function clean_source_field($source) {
     if (empty($source)) {
         return '';
@@ -244,10 +265,23 @@ function clean_source_field($source) {
         }
     }
 
-    // If no exact match, try to clean up any duplicates
-    foreach ($duplicates as $duplicate => $clean) {
-        if (stripos($source, $clean) !== false) {
-            return $clean;
+    // Common source values to check for duplicates
+    $common_sources = array(
+        'School News',
+        'Health Talk by Karen Leung Foundation',
+        'Karen Leung Foundation',
+        'Health Talk',
+        'Referral',
+        'Website',
+        'Karen Leung Foundation Website'
+    );
+    
+    // Check for duplicates with different patterns
+    foreach ($common_sources as $common_source) {
+        // Pattern to match the same source repeated with or without separators
+        $pattern = '/' . preg_quote($common_source, '/') . '\s*[\-,]?\s*' . preg_quote($common_source, '/') . '/i';
+        if (preg_match($pattern, $source)) {
+            return $common_source;
         }
     }
 
@@ -290,6 +324,58 @@ function clean_status_field($status) {
 
     return $status;
 }
+
+// Function to clean up existing records with duplicate Source and Method values
+function cleanup_existing_duplicate_values() {
+    // Get all projectsafes posts
+    $posts = get_posts(array(
+        'post_type' => 'psyem-projectsafes',
+        'posts_per_page' => -1,
+        'fields' => 'ids'
+    ));
+    
+    $updated_source = 0;
+    $updated_method = 0;
+    
+    foreach ($posts as $post_id) {
+        // Clean up Source field
+        $source = get_post_meta($post_id, 'psyem_projectsafe_source', true);
+        $cleaned_source = clean_source_field($source);
+        if ($source !== $cleaned_source) {
+            update_post_meta($post_id, 'psyem_projectsafe_source', $cleaned_source);
+            $updated_source++;
+        }
+        
+        // Clean up Method field
+        $method = get_post_meta($post_id, 'psyem_projectsafe_method', true);
+        $cleaned_method = clean_method_field($method);
+        if ($method !== $cleaned_method) {
+            update_post_meta($post_id, 'psyem_projectsafe_method', $cleaned_method);
+            $updated_method++;
+        }
+    }
+    
+    // Add admin notice
+    if ($updated_source > 0 || $updated_method > 0) {
+        add_action('admin_notices', function() use ($updated_source, $updated_method) {
+            ?>
+            <div class="notice notice-success is-dismissible">
+                <p><?php echo sprintf('Cleaned up %d Source values and %d Method values to remove duplicates.', $updated_source, $updated_method); ?></p>
+            </div>
+            <?php
+        });
+    }
+}
+
+// Run the cleanup on admin init with a transient to prevent running on every page load
+function schedule_duplicate_cleanup() {
+    // Only run this once a day
+    if (false === get_transient('projectsafes_duplicate_cleanup_run')) {
+        cleanup_existing_duplicate_values();
+        set_transient('projectsafes_duplicate_cleanup_run', true, DAY_IN_SECONDS);
+    }
+}
+add_action('admin_init', 'schedule_duplicate_cleanup');
 
 // Handle AJAX request for CSV import
 function process_projectsafes_csv_import_ajax() {
@@ -342,8 +428,9 @@ function process_projectsafes_csv_import_ajax() {
             continue;
         }
         
-        // Clean and prepare the data
+        // Clean and prepare the data with improved functions
         $source = clean_source_field(sanitize_text_field($data[11]));
+        $method = clean_method_field(sanitize_text_field($data[12]));
         $status = isset($data[15]) ? clean_status_field(sanitize_text_field($data[15])) : '';
         
         // Rest of your import code...
@@ -358,7 +445,6 @@ function process_projectsafes_csv_import_ajax() {
         $region = sanitize_text_field($data[8]);
         $district = sanitize_text_field($data[9]);
         $address = sanitize_text_field($data[10]);
-        $method = clean_method_field(sanitize_text_field($data[12]));
         $date = sanitize_text_field($data[13]);
         $type = sanitize_text_field($data[14]);
         
